@@ -53,7 +53,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 imputer = SimpleImputer()
 
 X_train[cols] = imputer.fit_transform(X_train[cols])
-X_test[cols] = imputer.fit_transform(X_test[cols])
+X_test[cols] = imputer.transform(X_test[cols])
 
 # %%
 

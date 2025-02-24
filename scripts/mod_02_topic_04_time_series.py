@@ -73,8 +73,8 @@ plt.show()
 df_mod = df_hist - trend + trend.mean()
 
 sns.catplot(
-    y=df_hist,
-    x=df_hist.index.month,
+    y=df_mod,
+    x=df_mod.index.month,
     kind='box',
     showfliers=False)
 
@@ -110,10 +110,10 @@ fig, axes = plt.subplots(
     sharex=True,
     figsize=(10, 7))
 
-for i, d in enumerate([df_zscore, df_zscore_adv]):
+for i, d in enumerate([df_zscore, df_zscore_adv.values]):
     ax = axes[i]
     sns.lineplot(d, ax=ax)
-    ax.fill_between(d.index.values, -3, 3, alpha=0.15)
+    ax.fill_between(np.arange(len(d)), -3, 3, alpha=0.15)
 
 plt.show()
 
@@ -122,7 +122,7 @@ plt.show()
 playoffs = pd.DataFrame({
     'holiday': 'playoff',
     'ds': pd.to_datetime(['2013-01-12',
-                        '2014-01-12',
+                          '2014-01-12',
                           '2014-01-19',
                           '2014-02-02',
                           '2015-01-11',
@@ -221,3 +221,7 @@ plt.show()
 approx_mape = median_absolute_error(df_test, pred['yhat'])
 
 print(f'Accuracy: {1 - approx_mape:.1%}')
+
+# %%
+
+pred['yhat_inv'] = np.exp(pred['yhat'])
