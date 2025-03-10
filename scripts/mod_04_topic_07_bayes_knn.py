@@ -31,7 +31,7 @@ data.skew(numeric_only=True)
 
 # %%
 
-data = data[zscore(data['campaign']).abs().lt(2)]
+data = data[np.abs(zscore(data['campaign'])) < 2]
 
 # %%
 
