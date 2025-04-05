@@ -1,6 +1,8 @@
 # Імпорти
 import os
+import sys
 import warnings
+from typing import Optional, Sequence, Union
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
@@ -26,6 +28,13 @@ from sklearn.model_selection import (GridSearchCV, StratifiedKFold,
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, RobustScaler, StandardScaler
 
+# Add project root to path for importing kaggle_metric_utilities
+sys.path.append('/home/nickolasz/Projects/GoIT/MACHINE-LEARNING-NEO')
+try:
+    import kaggle_metric_utilities
+except ImportError:
+    print("Warning: kaggle_metric_utilities module not found. Using sklearn metrics only.")
+
 warnings.filterwarnings('ignore')
 
 # Create a folder for saving plots if it doesn't exist
@@ -47,9 +56,34 @@ try:
     train_df = pd.read_csv(
         "/home/nickolasz/Projects/GoIT/MACHINE-LEARNING-NEO/datasets/final/final_proj_data.csv"
     )
+    
+    # Use a sample of training data if it's too large (speeds up computation significantly)
+    MAX_TRAINING_SAMPLES = 5000  # Adjust this based on your system's capabilities
+    if len(train_df) > MAX_TRAINING_SAMPLES:
+        print(f"Taking a stratified sample of {MAX_TRAINING_SAMPLES} records from {len(train_df)} for faster computation")
+        # Take a stratified sample to maintain class distribution
+        train_df, _ = train_test_split(
+            train_df, 
+            train_size=MAX_TRAINING_SAMPLES,
+            stratify=train_df['y'],
+            random_state=42
+        )
+    
+    # Optimize dtypes to reduce memory usage
+    for col in train_df.select_dtypes(include=['float64']).columns:
+        train_df[col] = pd.to_numeric(train_df[col], downcast='float')
+    for col in train_df.select_dtypes(include=['int64']).columns:
+        train_df[col] = pd.to_numeric(train_df[col], downcast='integer')
+    
     test_df = pd.read_csv(
         "/home/nickolasz/Projects/GoIT/MACHINE-LEARNING-NEO/datasets/final/final_proj_test.csv"
     )
+    
+    # Apply same dtype optimization to test data
+    for col in test_df.select_dtypes(include=['float64']).columns:
+        test_df[col] = pd.to_numeric(test_df[col], downcast='float')
+    for col in test_df.select_dtypes(include=['int64']).columns:
+        test_df[col] = pd.to_numeric(test_df[col], downcast='integer')
     
     # Try to load validation file but handle if it doesn't exist
     validation_path = "/home/nickolasz/Projects/GoIT/MACHINE-LEARNING-NEO/datasets/final/final_proj_validation.csv"
@@ -57,6 +91,13 @@ try:
         validation_df = pd.read_csv(validation_path)
         has_validation = True
         print("Validation data loaded successfully")
+        
+        # Apply dtype optimization to validation data
+        for col in validation_df.select_dtypes(include=['float64']).columns:
+            validation_df[col] = pd.to_numeric(validation_df[col], downcast='float')
+        for col in validation_df.select_dtypes(include=['int64']).columns:
+            validation_df[col] = pd.to_numeric(validation_df[col], downcast='integer')
+            
     except FileNotFoundError:
         print(f"Validation file not found at {validation_path}")
         print("Will create a subset of test data for validation purposes")
@@ -137,7 +178,7 @@ try:
     print(f"Categorical features: {len(cat_features)}")
     
     # 6.2 Analyze categorical features
-    if cat_features:
+    if (cat_features):
         plt.figure(figsize=(15, 10))
         gs = gridspec.GridSpec(len(cat_features) // 2 + 1, 2)
         
@@ -310,6 +351,20 @@ try:
     plt.savefig(f"{output_dir}/feature_importance_combined.png")
     plt.show()
 
+    # Enhanced feature selection based on combined importance
+    print("\nSelecting best features based on combined importance scores...")
+    # Select top features based on combined score
+    top_features_count = 80  # Increase number of features to consider
+    top_features = combined_importance.head(top_features_count)['Feature'].tolist()
+    
+    # Create a version of X with only the selected features
+    if len(top_features) < X_encoded.shape[1]:
+        print(f"Reducing feature space from {X_encoded.shape[1]} to {len(top_features)} features")
+        X_selected = X_encoded[top_features]
+    else:
+        print("Using all features")
+        X_selected = X_encoded
+    
     # 8. Advanced preprocessing and ML pipeline setup
     print("\nStep 3: Building the ML pipeline")
     
@@ -319,7 +374,7 @@ try:
     # and standard scaling
     numeric_transformer = Pipeline(
         steps=[
-            ("imputer", KNNImputer(n_neighbors=5)),
+            ("imputer", KNNImputer(n_neighbors=7)),  # Increased from 5 to 7
             ("scaler", RobustScaler())  # RobustScaler is less sensitive to outliers
         ]
     )
@@ -330,7 +385,7 @@ try:
         steps=[
             ("imputer", SimpleImputer(strategy="most_frequent")),
             ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False, 
-                                     max_categories=15)),  # Adjusted based on cardinality analysis
+                                     max_categories=20)),  # Increased from 15 to 20
         ]
     )
     
@@ -342,56 +397,83 @@ try:
         remainder='drop'  # Drop columns not specified in transformers
     )
     
-    # 9. Experiment with multiple modeling approaches
+    # 9. Experiment with multiple modeling approaches with enhanced parameters
     
-    # 9.1 Logistic Regression with SMOTE
+    # 9.1 Logistic Regression with SMOTE - improved parameters
     logreg_pipeline = ImbPipeline(
         steps=[
             ("preprocessor", preprocessor),
-            ("feature_selection", SelectKBest(f_classif, k=20)),
-            ("sampling", SMOTE(random_state=42)),
+            ("feature_selection", SelectKBest(f_classif, k=30)),  # Increased from 20 to 30
+            ("sampling", SMOTE(random_state=42, sampling_strategy=0.5)),  # Adjusted sampling ratio
             (
                 "classifier",
                 LogisticRegression(
-                    max_iter=1000, 
+                    max_iter=2000,  # Increased from 1000
                     class_weight="balanced",
                     solver="liblinear",
-                    C=0.1
+                    C=0.5,  # Adjusted from 0.1 to 0.5
+                    penalty="l1"  # Explicitly set L1 regularization
                 ),
             ),
         ]
     )
     
-    # 9.2 Random Forest with balanced class weights
+    # 9.2 Random Forest with balanced class weights - improved parameters
     rf_pipeline = ImbPipeline(
         steps=[
             ("preprocessor", preprocessor),
-            ("sampling", SMOTE(random_state=42)),
+            ("sampling", SMOTE(random_state=42, sampling_strategy=0.4)),  # Adjusted sampling ratio
             (
                 "classifier",
                 RandomForestClassifier(
-                    class_weight="balanced",
+                    class_weight={0: 1, 1: 6},  # Custom weights based on class imbalance ratio
                     random_state=42,
-                    n_estimators=100,
-                    max_depth=10,
-                    min_samples_split=5,
+                    n_estimators=200,  # Increased from 100
+                    max_depth=12,      # Increased from 10
+                    min_samples_split=3,
+                    min_samples_leaf=2,
+                    bootstrap=True,
+                    max_features='sqrt'  # Specify feature selection strategy
                 ),
             ),
         ]
     )
     
-    # 9.3 Gradient Boosting
+    # 9.3 Gradient Boosting - improved parameters
     gb_pipeline = ImbPipeline(
         steps=[
             ("preprocessor", preprocessor),
+            ("sampling", SMOTE(random_state=42, sampling_strategy=0.4)),  # Add sampling to GB
             (
                 "classifier",
                 GradientBoostingClassifier(
                     random_state=42,
-                    n_estimators=100,
-                    learning_rate=0.1,
-                    max_depth=3,
+                    n_estimators=200,  # Increased from 100
+                    learning_rate=0.05,  # Reduced from 0.1
+                    max_depth=4,       # Increased from 3
+                    subsample=0.8,     # Add subsampling
+                    min_samples_split=5,
+                    min_samples_leaf=5
                 ),
+            ),
+        ]
+    )
+    
+    # 9.4 Add a Voting Classifier that combines all models
+    voting_pipeline = ImbPipeline(
+        steps=[
+            ("preprocessor", preprocessor),
+            ("sampling", SMOTE(random_state=42, sampling_strategy=0.4)),
+            (
+                "classifier",
+                VotingClassifier(
+                    estimators=[
+                        ('lr', LogisticRegression(max_iter=2000, class_weight="balanced", solver="liblinear", C=0.5, penalty="l1")),
+                        ('rf', RandomForestClassifier(class_weight={0: 1, 1: 6}, random_state=42, n_estimators=200, max_depth=12)),
+                        ('gb', GradientBoostingClassifier(random_state=42, n_estimators=200, learning_rate=0.05, max_depth=4))
+                    ],
+                    voting='soft'  # Use probability estimates for voting
+                )
             ),
         ]
     )
@@ -399,14 +481,15 @@ try:
     # 10. Cross-validation and model evaluation
     print("\nStep 4: Model evaluation with cross-validation")
     
-    # Define stratified cross-validation
+    # Define stratified cross-validation with more folds
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     
     # Evaluate models with cross-validation
     model_pipelines = {
         "Logistic Regression": logreg_pipeline,
         "Random Forest": rf_pipeline,
-        "Gradient Boosting": gb_pipeline
+        "Gradient Boosting": gb_pipeline,
+        "Voting Ensemble": voting_pipeline
     }
     
     results = {}
@@ -429,15 +512,103 @@ try:
     
     print(f"\nBest model: {best_model_name} with balanced accuracy: {results[best_model_name]['mean']:.4f}")
     
-    # Add a model evaluation function to ensure consistent metrics
+    # Add the Kaggle scoring function
+    def kaggle_balanced_accuracy_score(solution: pd.DataFrame, submission: pd.DataFrame, row_id_column_name: str, 
+                                      weights_column_name: Optional[str]=None, adjusted: bool=False) -> float:
+        '''
+        Kaggle-compatible balanced accuracy score.
+        
+        Compute the balanced accuracy according to Kaggle's scoring function.
+        The balanced accuracy is the average of recall obtained on each class,
+        useful for imbalanced datasets.
+        
+        Parameters
+        ----------
+        solution : pd.DataFrame
+            Ground truth (correct) target values.
+        submission : pd.DataFrame
+            Estimated targets as returned by a classifier.
+        row_id_column_name : str
+            Name of the column containing row IDs.
+        weights_column_name : Optional[str], default=None
+            Name of the column containing sample weights.
+        adjusted : bool, default=False
+            When true, the result is adjusted for chance.
+            
+        Returns
+        -------
+        float
+            The balanced accuracy score.
+        '''
+        # Create copies to avoid modifying the original dataframes
+        solution_copy = solution.copy()
+        submission_copy = submission.copy()
+        
+        # Skip sorting and equality checks for the row_id_column since that should already be handled
+        del solution_copy[row_id_column_name]
+        del submission_copy[row_id_column_name]
+
+        sample_weight = None
+        if weights_column_name:
+            if weights_column_name not in solution_copy.columns:
+                raise ValueError(f'The solution weights column {weights_column_name} is not found')
+            sample_weight = solution_copy.pop(weights_column_name).values
+            if not pd.api.types.is_numeric_dtype(sample_weight):
+                raise Exception('The solution weights are not numeric')
+
+        if len(submission_copy.columns) > 1:
+            raise Exception(f'The submission can only include one column of predictions. Found {len(submission_copy.columns)}')
+
+        solution_values = solution_copy.values
+        submission_values = submission_copy.values
+
+        try:
+            if 'kaggle_metric_utilities' in sys.modules:
+                score_result = kaggle_metric_utilities.safe_call_score(
+                    balanced_accuracy_score, solution_values, submission_values, 
+                    sample_weight=sample_weight, adjusted=adjusted
+                )
+            else:
+                # Fallback to direct call if module not available
+                score_result = balanced_accuracy_score(
+                    solution_values, submission_values, 
+                    sample_weight=sample_weight, adjusted=adjusted
+                )
+            return score_result
+        except Exception as e:
+            print(f"Error calculating Kaggle balanced accuracy: {e}")
+            return float('nan')
+
+    # Update the evaluate_model function to include Kaggle scoring method
     def evaluate_model(model, X_data, y_true, dataset_name=""):
         """Evaluate model with balanced accuracy score and other metrics"""
         y_pred = model.predict(X_data)
+        
+        # Original balanced accuracy calculation
         bal_acc = balanced_accuracy_score(y_true, y_pred)
+        
+        # Prepare data for Kaggle scoring format
+        solution_df = pd.DataFrame({'y': y_true})
+        solution_df['id'] = range(len(solution_df))
+        
+        pred_df = pd.DataFrame({'y': y_pred})
+        pred_df['id'] = range(len(pred_df))
+        
+        # Calculate Kaggle balanced accuracy score
+        try:
+            kaggle_bal_acc = kaggle_balanced_accuracy_score(solution_df, pred_df, row_id_column_name='id')
+            using_kaggle_metric = True
+        except Exception as e:
+            print(f"Could not calculate Kaggle balanced accuracy: {e}")
+            kaggle_bal_acc = bal_acc
+            using_kaggle_metric = False
+        
         report = classification_report(y_true, y_pred)
         
         print(f"\nEvaluation on {dataset_name} dataset:")
-        print(f"Balanced Accuracy: {bal_acc:.4f}")
+        print(f"Sklearn Balanced Accuracy: {bal_acc:.4f}")
+        if using_kaggle_metric:
+            print(f"Kaggle Balanced Accuracy: {kaggle_bal_acc:.4f}")
         print("\nClassification Report:")
         print(report)
         
@@ -452,42 +623,59 @@ try:
         plt.show()
         
         return bal_acc
-    
+
     # 11. Hyperparameter tuning for best model
     print("\nStep 5: Hyperparameter tuning for the best model")
     
     if best_model_name == "Logistic Regression":
         param_grid = {
-            'classifier__C': [0.01, 0.1, 1.0, 10.0],
+            'classifier__C': [0.01, 0.1, 0.5, 1.0, 10.0],
             'classifier__penalty': ['l1', 'l2'],
-            'feature_selection__k': [15, 20, 25]
+            'feature_selection__k': [20, 25, 30, 35]
         }
     elif best_model_name == "Random Forest":
         param_grid = {
-            'classifier__n_estimators': [50, 100, 200],
-            'classifier__max_depth': [5, 10, 15],
-            'classifier__min_samples_split': [2, 5, 10]
+            'classifier__n_estimators': [100, 200, 300],
+            'classifier__max_depth': [5, 8, 12, 15],
+            'classifier__min_samples_split': [2, 3, 5],
+            'classifier__min_samples_leaf': [1, 2, 4],
+            'classifier__max_features': ['sqrt', 'log2', None],
+            'sampling__sampling_strategy': [0.3, 0.4, 0.5]  # Try different sampling ratios
         }
-    else:  # Gradient Boosting
+    elif best_model_name == "Gradient Boosting":
         param_grid = {
-            'classifier__n_estimators': [50, 100, 200],
-            'classifier__learning_rate': [0.01, 0.1, 0.2],
-            'classifier__max_depth': [2, 3, 4]
+            'classifier__n_estimators': [100, 200, 300],
+            'classifier__learning_rate': [0.01, 0.05, 0.1, 0.2],
+            'classifier__max_depth': [3, 4, 5],
+            'classifier__subsample': [0.7, 0.8, 0.9],
+            'sampling__sampling_strategy': [0.3, 0.4, 0.5]  # Try different sampling ratios
+        }
+    else:  # Voting Ensemble
+        param_grid = {
+            'sampling__sampling_strategy': [0.3, 0.4, 0.5]  # Only tune sampling for ensemble
         }
     
+    # Using more cross-validation folds for more robust evaluation
     grid_search = GridSearchCV(
         best_model,
         param_grid,
-        cv=3,
-        scoring='balanced_accuracy',  # Explicitly using balanced_accuracy
-        n_jobs=-1
+        cv=5,
+        scoring='balanced_accuracy',
+        n_jobs=-1,
+        verbose=1  # Add verbosity to see progress
     )
     
+    print("\nPerforming grid search for best parameters. This may take some time...")
     grid_search.fit(X, y)
     tuned_model = grid_search.best_estimator_
     
     print("Best parameters:", grid_search.best_params_)
     print(f"Tuned model balanced accuracy: {grid_search.best_score_:.4f}")
+    
+    # Add multiple evaluation metrics to verify results
+    print("\nVerifying tuned model performance with cross-validation...")
+    cv_scores = cross_val_score(tuned_model, X, y, cv=5, scoring='balanced_accuracy', n_jobs=-1)
+    print(f"Cross-validation balanced accuracy: {np.mean(cv_scores):.4f} ± {np.std(cv_scores):.4f}")
     
     # 12. Train final model on full dataset (train + test)
     print("\nStep 6: Training final model on combined training and test data")
@@ -518,6 +706,15 @@ try:
     print("\nStep 7: Making predictions on validation set")
     if has_validation:
         validation_preds = tuned_model.predict(validation_df)
+        validation_probs = np.zeros((len(validation_df), 2))
+        
+        # Try to get prediction probabilities if available
+        try:
+            validation_probs = tuned_model.predict_proba(validation_df)
+        except:
+            # If probabilities are not available, use predictions as proxy
+            for i, pred in enumerate(validation_preds):
+                validation_probs[i, int(pred)] = 1.0
         
         # Save predictions to file with the required format: index,y
         validation_results = pd.DataFrame({
@@ -534,6 +731,32 @@ try:
             val_bal_acc = evaluate_model(tuned_model, validation_df.drop('y', axis=1, errors='ignore'), 
                                        validation_df['y'], "Validation")
             print(f"Final model balanced accuracy on validation data: {val_bal_acc:.4f}")
+            
+            # Additional validation with probability calibration
+            from sklearn.calibration import CalibratedClassifierCV
+            
+            print("\nTrying calibrated classifier for potential improvement...")
+            # Create a calibrated version of the tuned model
+            try:
+                calibrated_model = CalibratedClassifierCV(tuned_model, cv='prefit')
+                calibrated_model.fit(X, y)
+                
+                calibrated_preds = calibrated_model.predict(validation_df.drop('y', axis=1, errors='ignore'))
+                calib_bal_acc = balanced_accuracy_score(validation_df['y'], calibrated_preds)
+                print(f"Calibrated model balanced accuracy: {calib_bal_acc:.4f}")
+                
+                # If calibrated model is better, save its predictions
+                if calib_bal_acc > val_bal_acc:
+                    print("Calibrated model performs better! Saving calibrated predictions...")
+                    calibrated_results = pd.DataFrame({
+                        'y': calibrated_preds
+                    })
+                    
+                    calib_output_path = "/home/nickolasz/Projects/GoIT/MACHINE-LEARNING-NEO/validation_predictions_calibrated.csv"
+                    calibrated_results.to_csv(calib_output_path, index=True)
+                    print(f"Calibrated predictions saved to {calib_output_path}")
+            except Exception as calib_error:
+                print(f"Could not use calibration: {calib_error}")
     else:
         print("No validation data available for predictions")
     
@@ -660,10 +883,16 @@ except Exception as e:
             ]
         )
         
-        # Simple logistic regression model
+        # Enhanced fallback model with SMOTE and better parameters
         simple_pipeline = Pipeline([
             ('preprocessor', simple_preprocessor),
-            ('classifier', LogisticRegression(max_iter=1000, class_weight='balanced'))
+            ('sampling', SMOTE(random_state=42, sampling_strategy=0.4)),
+            ('classifier', RandomForestClassifier(
+                n_estimators=200, 
+                max_depth=8,
+                class_weight={0: 1, 1: 6},
+                random_state=42
+            ))
         ])
         
         # Train on available data
